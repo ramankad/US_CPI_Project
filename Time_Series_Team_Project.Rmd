@@ -1,0 +1,671 @@
+---
+title: "Forecasting Food Price Impact On Consumers"
+author: 'Team 16: Jingjing | Jeeny | Sam | Raman'
+subtitle: "MSBR-70320-SS-02: Time Series Forecasting"
+output:
+  html_document:
+    highlight: pygments
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+  html_notebook:
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, out.height = "\\textheight",  out.width = "\\textwidth",
+                      out.extra = "keepaspectratio=false")
+```
+
+```{r, include=FALSE}
+rm(list=ls())
+```
+
+### Load relvant packages 
+```{r message=FALSE, warning=FALSE}
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(vars)
+library(forecast) 
+library(zoo)
+library(stats)
+library(lubridate)
+library(RColorBrewer)
+library(fmsb)
+```
+
+# Food Price Index Forecasting
+
+### Read Data & Partiton
+```{r}
+# Read data and partition
+food.data <- read.csv("Food_price_indices_data_v3.3.csv")
+food.data <- food.data[, "Food.Price.Index"]
+
+head(food.data)
+tail(food.data)
+
+food.data.ts <- ts(food.data, freq = 12, start = c(1990, 1), end = c(2023, 1))
+n_valid <- 12 
+n_train <- length(food.data.ts) - n_valid
+train.ts <- window(food.data.ts, start = c(1990, 1), end = c(1990, n_train))
+valid.ts <- window(food.data.ts, start = c(1990, n_train+1), end = c(1990, n_train+n_valid))
+```
+
+### Plot time series on FAO dataset
+```{r}
+# Create a time series plot
+plot(food.data.ts, main = "Food Price Index (1990-2023)", ylab = "Index Value")
+lines(train.ts, col = "blue")
+lines(valid.ts, col = "red")
+legend("topleft", legend = c("Training Data", "Validation Data"), col = c("blue", "red"), lty = 1)
+```
+
+### See if the time series data has random walk
+```{r}
+# Check for random walk in the time series data
+acf.diff <- Acf(diff(train.ts), main = "Autocorrelation Function of First Differences", xlab = "Lag", ylab = "Correlation")
+abline(h=0)
+acf.seasonal.diff <- Acf(diff(train.ts, 12), main = "Autocorrelation Function of Seasonal Differences", xlab = "Lag", ylab = "Correlation")
+abline(h=0)
+```
+
+### Building Models
+```{r}
+# Build models
+train.lm.trend.season <- tslm(train.ts ~ trend + season)
+train.lm.trend.season.pred <- forecast(train.lm.trend.season, h = n_valid, level = 0)
+train.hwin.R <- ets(train.ts)
+train.hwin.R.pred <- forecast(train.hwin.R, h = n_valid, level = 0)
+train.hwin <- ets(train.ts, model = 'AAA')
+train.hwin.pred <- forecast(train.hwin, h = n_valid, level = 0)
+train.arima <- auto.arima(train.ts)
+train.arima.pred <- forecast(train.arima, h = n_valid, level = 0)
+snaive.pred <- snaive(train.ts, h = n_valid, level = 0)
+```
+
+```{r}
+# Create a plot with labels and legend
+plot(train.lm.trend.season.pred, include = 12, main = "Comparing Different Forecasting Models", xlab = "Date", ylab = "Food Price Index", ylim = c(110, 160))
+lines(train.hwin.pred$mean, col = 'red', lwd = 2)
+lines(train.arima.pred$mean, col = 'green', lwd = 2)
+lines(snaive.pred$mean, col = 'purple', lwd = 2)
+lines(train.hwin.R.pred$mean, col= 'brown', lwd=2)
+lines(valid.ts, lwd = 2, col = 'black')
+legend("topleft",
+       legend=c("Linear Regression", "Holt-Winters Automatic", "ARIMA", "Seasonal Naive", "Actual Values"),
+       col=c("blue", "red", "green", "purple", "black"),
+       lwd=2)
+```
+
+### Further Investigation
+```{r}
+# Compute the accuracy of each model
+fp1 <- accuracy(train.lm.trend.season.pred$mean, valid.ts)
+fp2 <- accuracy(train.hwin.pred$mean, valid.ts) 
+fp3 <- accuracy(train.arima.pred$mean, valid.ts) #best model
+fp4 <- accuracy(snaive.pred$mean, valid.ts)
+fp5 <- accuracy(train.hwin.R.pred$mean, valid.ts)
+
+radar1 <- rbind.data.frame(fp1,fp2,fp3,fp4,fp5)
+row.names(radar1) <- c('lm', 'hwin', 'arima', 'snaive', 'hwinR')
+radar1 
+```
+
+```{r}
+colors_border=c( '#00bfa0', '#58508d' , '#bc5090', '#ff6361','#ffa600' )
+
+
+radarchart( radar1[1:5], axistype=0 , maxmin=F,
+    #custom polygon
+    pcol=colors_border , #pfcol=colors_in , 
+    plwd=3 , plty=1,
+    #custom the grid
+    cglcol="grey", cglty=1, axislabcol="black", cglwd=0.8, 
+    #custom labels
+    vlcex=0.8,
+    title = 'Food Price Index Forecasting Error'
+    )
+
+# Add a legend
+legend(x=1, y=1.3, legend = rownames(radar1), bty = "n", pch=20 , col=colors_border , text.col = "grey", cex=0.8, pt.cex=3)
+```
+
+### Apply ARIMA(1,1,1)(0,0,1)[12] to the entire data set.
+```{r}
+#Fit the ARIMA model to the entire data set and make a 12-month forecast
+arima.full <- Arima(food.data.ts, order = c(1, 1, 1), seasonal = c(0, 1, 1))
+arima.full.pred <- forecast(arima.full, h = 12, level = 0)
+```
+
+### What would be the forecasted FPI for the next 12 months?
+```{r}
+#What would be the forecasted FPI for the next 12 months
+arima.full.pred$mean
+plot(arima.full.pred$mean, include= 12, col = 'green', lwd = 2, main = "12-Month Forecast of Food Prices using ARIMA Model", xlab = "Date", ylab = "Food Price Index")
+```
+
+# Milk Price Forecasting
+
+### Read Data & Partiton
+```{r warning=FALSE}
+milk.data.original <- read.csv("MilkPrice.csv", col.names = c('date', 'price'))
+milk.ts.original <- ts(milk.data.original$price, freq=12, start = c(1995, 7), end = c(2023,1))
+milk.data <- milk.data.original[c(151:331),]
+head(milk.data)
+tail(milk.data)
+
+milk.data %>% 
+  filter(is.na(price)) # check if there is any na in price column. 
+
+milk.ts <- ts(milk.data$price, freq=12, start = c(2008, 1), end = c(2023,1))
+head(milk.ts)
+tail(milk.ts)
+
+
+nValid <- 12
+nTrain <- length(milk.ts) - nValid
+train.ts <-window(milk.ts, start = c(2008,1), end = c(2008,nTrain))
+valid.ts <-window(milk.ts, start = c(2008,nTrain+1), end = c(2008,nTrain+nValid))
+head(train.ts)
+tail(valid.ts)
+
+```
+
+### Plot time series on Milk dataset
+```{r}
+# Create a time series plot
+plot(milk.ts, main = "Milk Price (2008-2023)", ylab = "Price ($)")
+lines(train.ts, col = "blue")
+lines(valid.ts, col = "red")
+legend("topleft", legend = c("Training Data", "Validation Data"), col = c("blue", "red"), lty = 1)
+```
+
+### Random walk detection
+```{r}
+acf.diff <- Acf(diff(train.ts), main = "Autocorrelation Function of First Differences", xlab = "Lag", ylab = "Correlation")
+abline(h=0)
+acf.seasonal.diff <- Acf(diff(train.ts, 3), main = "Autocorrelation Function of Seasonal Differences", xlab = "Lag", ylab = "Correlation")
+abline(h=0)
+# The AutoCorrelation function is significantly different from 0 , there is no white noise and therefore no random walk. 
+```
+
+### Building Models - milk
+```{r}
+train.lm.trend.season <- tslm(train.ts ~ trend + season)
+train.lm.trend.season.pred <- forecast(train.lm.trend.season, h=nValid, level=0)
+#Fit a regression model with a linear trend and additive seasonality on the training set. Then find the forecast on the validation set
+
+poly.season.reg <- tslm(train.ts~trend + I(trend^2) + season)
+poly.season.reg.pred <- forecast(poly.season.reg, h=nValid, level=0)
+#head(poly.season.reg.pred$mean)
+
+snaive.pred <-snaive(train.ts, h=nValid, level=0)
+#head(snaive.pred$mean)
+#Fit a seasonal naive method on the training set and compute the forecast values on the validation set
+
+train.hwin.R <- ets(train.ts)
+train.hwin.R.pred <- forecast(train.hwin.R, h=nValid, level=0)
+
+# train.ets.aan <- ets(train.ts, model = 'AAN') #SES
+# train.ets.aan.pred <- forecast(train.ets.aan, h=nValid, level=0)
+# #head(train.ets.aan.pred$mean)
+
+train.hwin<- ets(train.ts, model = 'AAA')
+train.hwin.pred <- forecast(train.hwin, h=nValid, level=0)
+#head(train.hwin.pred$mean)
+#Fit a holt-winter method on the training set. Use ets() function to determine the specific argument. Then find the forecasts on the validation set
+
+train.arima <- auto.arima(train.ts)
+train.arima.pred <- forecast(train.arima, h=nValid, level=0)
+
+```
+
+```{r}
+# Create a plot with labels and legend
+plot(train.lm.trend.season.pred, include = 12, main = "Comparing Different Forecasting Models", xlab = "Date", ylab = "Milk Price ($)", ylim = c(3.0, 4.4))
+lines(poly.season.reg.pred$mean, col = 'orange', lwd=2)
+lines(snaive.pred$mean, col ='purple', lwd=2)
+lines(train.hwin.R.pred$mean, col= 'brown', lwd=2)
+lines(train.hwin.pred$mean, col = 'red', lwd=2)
+lines(train.arima.pred$mean, col = 'green', lwd=2)
+lines(valid.ts, lwd=2, col = 'black')
+legend("topleft", 
+       legend = c("Linear Trend and Seasonal Model", "Polynomial Model with Trend and Seasonality", "Seasonal Naive Model", "Holt-Winter's Method", "ARIMA Model", "Actual Values"), 
+       col = c("blue", "orange", "purple", "brown", "red", "green", "black"), 
+       lwd = 2, cex = 0.6)
+```
+
+### Further Investigation
+```{r}
+# Compute the accuracy of each model
+milk1<-accuracy(train.lm.trend.season.pred$mean, valid.ts) 
+milk2<-accuracy(poly.season.reg.pred$mean, valid.ts) 
+milk3<-accuracy(snaive.pred$mean, valid.ts) 
+milk4<-accuracy(train.hwin.R.pred$mean, valid.ts)
+milk5<-accuracy(train.hwin.pred$mean, valid.ts) #best model
+milk6<-accuracy(train.arima.pred$mean, valid.ts)
+
+radar2 <- rbind.data.frame(milk1,milk2,milk3,milk4,milk5,milk6)
+row.names(radar2) <- c('lm', 'polyseason','snaive', 'hwinR', 'hwin','arima')
+radar2
+```
+
+```{r}
+library(RColorBrewer)
+
+colors_border=c('#1a53ff', '#00bfa0', '#58508d' , '#bc5090', '#ff6361','#ffa600' )
+
+
+radarchart(radar2[1:5], axistype=0 , maxmin=F,
+    #custom polygon
+    pcol=colors_border, #pfcol=colors_in , 
+    plwd=3 , plty=1,
+    #custom the grid
+    cglcol="grey", cglty=1, axislabcol="black", cglwd=0.8, 
+    #custom labels
+    vlcex=0.8,
+    title = 'Milk Price Forecasting Error'
+    )
+
+# Add a legend
+legend(x=1, y=1.3, legend = rownames(radar2), bty = "n", pch=20 , col=colors_border , text.col = "grey", cex=0.8, pt.cex=3)
+```
+
+### Deploy the model to the entire set
+```{r}
+poly_full <- tslm(milk.ts~trend + I(trend^2) + season)
+poly_full_pred <- forecast(poly_full, h=24, level=0)
+
+hwin_full<- ets(milk.ts, model = 'AAA')
+hwin_full_pred <- forecast(hwin_full, h=nValid, level=0)
+
+```
+
+### What would be the forecasted milk price for the next 12 months?
+```{r}
+hwin_full_pred$mean
+plot(hwin_full_pred$mean, include = 12, col = 'green', lwd = 2, main = "12-Month Forecast of Milk Prices using Holt-Winter Model", xlab = "Date", ylab = "Milk Price")
+```
+
+# Chicken Price Forecasting
+
+### Read Data & Partiton
+```{r warning=FALSE}
+chicken.data <- read_excel("ChickenPrice.xls")[-c(1:10),]
+colnames(chicken.data) <- c('Date','price')
+chicken.data$price <- as.numeric(chicken.data$price)
+
+head(chicken.data)
+tail(chicken.data)
+
+chicken.data %>% 
+  filter(is.na(price)) # check if there is any na in price column. 
+
+chicken.ts <- ts(chicken.data$price, freq=12, start = c(1995, 7), end = c(2023,1))
+head(chicken.ts)
+tail(chicken.ts)
+
+
+nValid <- 12
+nTrain <- length(chicken.ts) - nValid
+train.ts <-window(chicken.ts, start = c(1995,7), end = c(1995,nTrain))
+valid.ts <-window(chicken.ts, start = c(1995,nTrain+1), end = c(1995,nTrain+nValid))
+head(train.ts)
+tail(valid.ts)
+
+```
+
+### Plot time series on Chicken dataset
+```{r}
+# Create a time series plot
+plot(chicken.ts, main = "Chicken Price (1995-2023)", ylab = "Price ($)")
+lines(train.ts, col = "blue")
+lines(valid.ts, col = "red")
+legend("topleft", legend = c("Training Data", "Validation Data"), col = c("blue", "red"), lty = 1)
+```
+
+### Check for random walk in the time series data
+```{r}
+acf.diff <- Acf(diff(train.ts), main = "Autocorrelation Function of First Differences", xlab = "Lag", ylab = "Correlation")
+abline(h=0)
+acf.seasonal.diff <- Acf(diff(train.ts, 12), main = "Autocorrelation Function of Seasonal Differences", xlab = "Lag", ylab = "Correlation")
+abline(h=0)
+```
+
+### Building Models
+```{r}
+train.lm.trend.season <- tslm(train.ts ~ trend + season)
+train.lm.trend.season.pred <- forecast(train.lm.trend.season, h=nValid, level=0)
+#Fit a regression model with a linear trend and additive seasonality on the training set. Then find the forecast on the validation set
+
+poly.season.reg <- tslm(train.ts~trend + I(trend^2) + season)
+poly.season.reg.pred <- forecast(poly.season.reg, h=nValid, level=0)
+#head(poly.season.reg.pred$mean)
+
+exp_season_mod <- tslm(train.ts ~ trend + season, lambda = 0) #lambda = 0 indicates exponential trend
+exp_season_mod_pred <- forecast(exp_season_mod, h= nValid, level=0)
+
+snaive.pred <-snaive(train.ts, h=nValid, level=0)
+#Fit a seasonal naive method on the training set and compute the forecast values on the validation set
+
+train.hwin.R <- ets(train.ts)
+train.hwin.R.pred <- forecast(train.hwin.R, h=nValid, level=0)
+
+train.ets.aan <- ets(train.ts, model = 'AAA') #SES
+train.ets.aan.pred <- forecast(train.ets.aan, h=nValid, level=0)
+
+train.hwin<- ets(train.ts, model = 'MNN')
+train.hwin.pred <- forecast(train.hwin, h=nValid, level=0)
+#Fit a holt-winter method on the training set. Use ets() function to determine the specific argument. Then find the forecasts on the validation set
+
+train.arima <- auto.arima(train.ts)
+train.arima.pred <- forecast(train.arima, h=nValid, level=0)
+#Build an ARIMA model on the training set and find the forecast on the validation set
+
+```
+
+```{r}
+# Create a plot with labels and legend
+plot(train.lm.trend.season.pred, include = 12, main = 'Comparing Different Forecasting Models', xlab = 'Date', ylab = 'Chicken Price ($)', ylim = c(3.10, 3.50))
+lines(poly.season.reg.pred$mean, col = 'orange', lwd=2)
+lines(exp_season_mod_pred$mean, col = 'gray', lwd=2)
+lines(snaive.pred$mean, col ='purple', lwd=2)
+lines(train.hwin.R.pred$mean, col= 'brown', lwd=2)
+lines(train.ets.aan.pred$mean, col = 'pink', lwd=2)
+lines(train.hwin.pred$mean, col = 'red', lwd=2)
+lines(train.arima.pred$mean, col = 'green', lwd=2)
+lines(valid.ts, col = 'black', lwd=2)
+legend('topleft', 
+       legend = c('Linear Trend + Seasonality', 'Quadratic Trend + Seasonality',
+                  'Exponential Trend + Seasonality', 'Seasonal Naive', 
+                  'Holt-Winters (R)', 'ETS (AAA)', 'Holt-Winters (MNN)',
+                  'ARIMA', 'Actual Values'), 
+       col = c('blue', 'orange', 'gray', 'purple', 'brown', 'pink', 'red', 'green', 'black'), 
+       lwd = 2, cex = 0.6)
+```
+
+### Further Investigation
+```{r}
+#Compute the accuracy of each model
+chicken1 <- accuracy(train.lm.trend.season.pred$mean, valid.ts) #best model
+chicken2 <- accuracy(poly.season.reg.pred$mean, valid.ts) 
+chicken3 <- accuracy(exp_season_mod_pred$mean, valid.ts)
+chicken4 <- accuracy(snaive.pred$mean, valid.ts) 
+chicken5 <- accuracy(train.hwin.R.pred$mean, valid.ts)
+chicken6 <- accuracy(train.ets.aan.pred$mean, valid.ts)
+chicken7 <- accuracy(train.hwin.pred$mean, valid.ts)
+chicken8 <- accuracy(train.arima.pred$mean, valid.ts)
+
+radar3 <- rbind.data.frame(chicken1,chicken2,chicken3,chicken4,chicken5,chicken6,chicken7,chicken8)
+row.names(radar3) <- c('lm', 'polyseason','exponential','snaive', 'hwinR','ets', 'hwin','arima')
+radar3
+```
+
+```{r}
+library(RColorBrewer)
+
+colors_border=c(rgb(0.2,0.5,0.5,0.9), rgb(0.8,0.2,0.5,0.9) , rgb(0.7,0.5,0.1,0.9), rgb(0.7,0.4,0.1,0.7), rgb(0.2,0.5,0.1,0.5), rgb(0.7,0.5,0.1,0.5), rgb(0.5,0.5,0.5,0.9), rgb(0.1,0.5,0.1,0.9) )
+
+
+radarchart( radar3[1:5], axistype=0 , maxmin=F,
+    #custom polygon
+    pcol=colors_border , #pfcol=colors_in , 
+    plwd=3 , plty=1,
+    #custom the grid
+    cglcol="grey", cglty=1, axislabcol="black", cglwd=0.8, 
+    #custom labels
+    vlcex=0.8,
+    title = 'Chicken Price Forecasting Error'
+    )
+
+# Add a legend
+legend(x=1, y=1.3, legend = rownames(radar3), bty = "n", pch=20 , col=colors_border , text.col = "grey", cex=0.8, pt.cex=3)
+```
+
+### Deploy the model to the entire set
+```{r}
+train.lm.trend.season <- tslm(chicken.ts ~ trend + season)
+train.lm.trend.season.pred <- forecast(train.lm.trend.season, h=nValid, level=0)
+```
+
+### What would be the forecasted FPI for the next 12 months?
+```{r}
+train.lm.trend.season.pred$mean 
+plot(train.lm.trend.season.pred$mean , include = 12, col = 'green', lwd = 2, main = "12-Month Forecast of Chicken Prices using Linear Regression Model", xlab = "Date", ylab = "Chicken Price")
+```
+
+# Egg Price Forecasting
+
+### Read Data & Partiton
+```{r warning=FALSE}
+egg.data <- read_excel("eggPrice.xls")[-c(1:10),]
+colnames(egg.data) <- c('Date','price')
+egg.data$price <- as.numeric(egg.data$price)
+
+head(egg.data)
+tail(egg.data)
+
+egg.data %>% 
+  filter(is.na(price)) # check if there is any na in price column. 
+
+egg.ts <- ts(egg.data$price, freq=12, start = c(1995, 7), end = c(2023,1))
+head(egg.ts)
+tail(egg.ts)
+
+
+nValid <- 12
+nTrain <- length(egg.ts) - nValid
+train.ts <-window(egg.ts, start = c(1995,7), end = c(1995,nTrain))
+valid.ts <-window(egg.ts, start = c(1995,nTrain+1), end = c(1995,nTrain+nValid))
+head(egg.ts)
+tail(egg.ts)
+```
+
+### Plot time series on Egg dataset
+```{r}
+# Create a time series plot
+plot(egg.ts, main = "Egg Price ($=1995-2023)", ylab = "Price ($)")
+lines(train.ts, col = "blue")
+lines(valid.ts, col = "red")
+legend("topleft", legend = c("Training Data", "Validation Data"), col = c("blue", "red"), lty = 1)
+```
+
+### Check for random walk in the time series data
+```{r}
+acf.diff <- Acf(diff(train.ts), main = "Autocorrelation Function of First Differences", xlab = "Lag", ylab = "Correlation")
+abline(h=0)
+acf.seasonal.diff <- Acf(diff(train.ts, 12), main = "Autocorrelation Function of Seasonal Differences", xlab = "Lag", ylab = "Correlation")
+abline(h=0)
+```
+
+### Building Models
+```{r}
+train.lm.trend.season <- tslm(train.ts ~ trend + season)
+train.lm.trend.season.pred <- forecast(train.lm.trend.season, h=nValid, level=0)
+#Fit a regression model with a linear trend and additive seasonality on the training set. Then find the forecast on the validation set
+
+poly.season.reg <- tslm(train.ts~trend + I(trend^2) + season)
+poly.season.reg.pred <- forecast(poly.season.reg, h=nValid, level=0)
+
+exp_season_mod <- tslm(train.ts ~ trend + season, lambda = 0) #lambda = 0 indicates exponential trend
+exp_season_mod_pred <- forecast(exp_season_mod, h= nValid, level=0)
+
+snaive.pred <-snaive(train.ts, h=nValid, level=0)
+#Fit a seasonal naive method on the training set and compute the forecast values on the validation set
+
+train.hwin.R <- ets(train.ts)
+train.hwin.R.pred <- forecast(train.hwin.R, h=nValid, level=0)
+
+train.ets.aan <- ets(train.ts, model = 'AAA') #SES
+train.ets.aan.pred <- forecast(train.ets.aan, h=nValid, level=0)
+
+train.hwin<- ets(train.ts, model = 'MNM')
+train.hwin.pred <- forecast(train.hwin, h=nValid, level=0)
+#Fit a holt-winter method on the training set. Use ets() function to determine the specific argument. Then find the forecasts on the validation set
+
+train.arima <- auto.arima(train.ts)
+train.arima.pred <- forecast(train.arima, h=nValid, level=0)
+#Build an ARIMA model on the training set and find the forecast on the validation set
+
+```
+
+```{r}
+# Create a plot with labels and legend
+plot(train.lm.trend.season.pred$mean, include = 12, main = "Comparing Different Forecasting Models", xlab = "Date", ylab = "Egg Price ($)", ylim = c(1.08, 2.02))
+lines(poly.season.reg.pred$mean, col = "green", lwd = 2)
+lines(exp_season_mod_pred$mean, col = "purple", lwd = 2)
+lines(snaive.pred$mean, col = "orange", lwd = 2)
+lines(train.hwin.R.pred$mean, col = "brown", lwd = 2)
+lines(train.ets.aan.pred$mean, col = "pink", lwd = 2)
+lines(train.hwin.pred$mean, col = "magenta", lwd = 2)
+lines(train.arima.pred$mean, col = "blue", lwd = 2)
+lines(valid.ts, col = 'black', lwd=2)
+legend("topleft", 
+       legend = c("Linear Regression", "Polynomial Regression", "Exponential Trend", "Seasonal Naive", "Holt-Winters (MNM)", "ETS (AAA)", "ARIMA", "Actual Values"), 
+       col = c("red", "green", "purple", "orange", "brown", "pink", "magenta", "blue", "black"), 
+       lwd = 2, cex = 0.6)
+```
+
+### Further Investigation
+```{r}
+#Compute the accuracy of each model
+egg1 <- accuracy(train.lm.trend.season.pred$mean, valid.ts) #best model
+egg2 <- accuracy(poly.season.reg.pred$mean, valid.ts) 
+egg3 <- accuracy(exp_season_mod_pred$mean, valid.ts)
+egg4 <- accuracy(snaive.pred$mean, valid.ts) 
+egg5 <- accuracy(train.hwin.R.pred$mean, valid.ts)
+egg6<-accuracy(train.ets.aan.pred$mean, valid.ts)
+egg7<-accuracy(train.hwin.pred$mean, valid.ts)
+egg8<-accuracy(train.arima.pred$mean, valid.ts)
+
+radar4 <- rbind.data.frame(egg1,egg2,egg3,egg4,egg5,egg6,egg7,egg8)
+row.names(radar4) <- c('lm', 'polyseason','exponential','snaive', 'hwinR','ets', 'hwin','arima')
+radar4
+```
+
+```{r}
+library(RColorBrewer)
+
+colors_border=c(rgb(0.2,0.5,0.5,0.9), rgb(0.8,0.2,0.5,0.9) , rgb(0.7,0.5,0.1,0.9), rgb(0.7,0.4,0.1,0.7), rgb(0.2,0.5,0.1,0.5), rgb(0.7,0.5,0.1,0.5), rgb(0.5,0.5,0.5,0.9), rgb(0.1,0.5,0.1,0.9) )
+
+
+radarchart( radar4[1:5], axistype=0 , maxmin=F,
+    #custom polygon
+    pcol=colors_border , #pfcol=colors_in , 
+    plwd=3 , plty=1,
+    #custom the grid
+    cglcol="grey", cglty=1, axislabcol="black", cglwd=0.8, 
+    #custom labels
+    vlcex=0.8,
+    title = 'Egg Price Forecasting Error'
+    )
+
+# Add a legend
+legend(x=1, y=1.3, legend = rownames(radar4), bty = "n", pch=20 , col=colors_border , text.col = "grey", cex=0.8, pt.cex=3)
+```
+
+### Deploy the model to the entire set
+```{r}
+poly.season.reg <- tslm(egg.ts~trend + I(trend^2) + season)
+poly.season.reg.pred <- forecast(poly.season.reg, h=nValid, level=0)
+```
+
+### What would be the forecasted FPI for the next 12 months?
+```{r}
+poly.season.reg.pred$mean
+plot(poly.season.reg.pred$mean, include = 12, col = 'green', lwd = 2, main = "12-Month Forecast of Egg Prices using Linear Regression Model", xlab = "Date", ylab = "Egg Price")
+```
+
+
+# Interactions Between Prices
+
+### Reading data
+```{r}
+#saveRDS(total,file = 'total_food_price.rds')
+total <- readRDS('total_food_price.rds')
+```
+
+### Converting all variables into time-series object
+```{r}
+FoodPriceIndex <- ts(as.numeric(total$FoodPriceIndex), start = c(2006,1,1), frequency = 12)
+ChickenPrice <- ts(as.numeric(total$ChickenPrice), start = c(2006,1,1), frequency = 12)
+EggPrice <- ts(as.numeric(total$EggPrice), start = c(2006,1,1), frequency = 12)
+RicePrice <- ts(as.numeric(total$RicePrice), start = c(2006,1,1), frequency = 12)
+milk_price <- ts(as.numeric(total$milk_price), start = c(2006,1,1), frequency = 12)
+```
+
+### Combining needed data
+```{r}
+model_data<-cbind(FoodPriceIndex, ChickenPrice, EggPrice, RicePrice, milk_price)
+
+# Combine data into a single data frame
+model_data_df <- as.data.frame(model_data)
+rmarkdown::paged_table(head(model_data_df, 5))
+```
+
+### Choosing appropriate lag
+```{r}
+lagselect <- VARselect(model_data, lag.max = 15)
+lagselect$selection
+```
+
+### Building baseline model
+```{r}
+Model1 <- VAR(model_data, p = 2, type = "const", season = NULL, exog = NULL) 
+```
+
+### Plot impulse response functions for each variable
+```{r}
+# Egg price response to food price index shock
+RRPirf <- irf(Model1, impulse = "FoodPriceIndex", response = "EggPrice", n.ahead = 40, boot = TRUE)
+plot(RRPirf, ylab = "Percent Change", main = "Egg Price Response to Food Price Index Shock", col = c("blue", "red"))
+legend("topleft", c("Egg Price", "Upper Bound", "Lower Bound"), col = c("blue", "red", "green"))
+
+# Rice price response to food price index shock
+RRPirf2 <- irf(Model1, impulse = "FoodPriceIndex", response = "RicePrice", n.ahead = 40, boot = TRUE)
+plot(RRPirf2, ylab = "Percent Change",  main = "Rice Price Response to Food Price Index Shock", col = c("blue", "red"))
+legend("topleft", c("Rice Price", "Upper Bound", "Lower Bound"), col = c("blue", "red", "green"))
+
+# Milk price response to food price index shock
+RRPirf3 <- irf(Model1, impulse = "FoodPriceIndex", response = "milk_price", n.ahead = 30, boot = TRUE)
+plot(RRPirf3, ylab = "Percent Change",  main = "Milk Price Response to Food Price Index Shock", col = c("blue", "red"))
+legend("topleft", c("Milk Price", "Upper Bound", "Lower Bound"), col = c("blue", "red", "green"))
+
+# Chicken price response to food price index shock
+RRPirf4 <- irf(Model1, impulse = "FoodPriceIndex", response = "ChickenPrice", n.ahead = 40, boot = TRUE)
+plot(RRPirf4, ylab = "Percent Change",  main = "Chicken Price Response to Food Price Index Shock", col = c("blue", "red"))
+legend("topleft", c("Chicken Price", "Upper Bound", "Lower Bound"), col = c("blue", "red", "green"))
+
+```
+
+### Further Smoothed data
+```{r}
+# Smoothed data
+ma.centered <- ma(model_data, order = 3)[c(-1,-198),]
+colnames(ma.centered) <- colnames(model_data)
+
+# Selecting appropriate lag
+lagselect3 <- VARselect(ma.centered, lag.max = 15)
+lagselect3$selection
+
+Model3 <- VAR(ma.centered, p = 5, type = "const", season = NULL, exog = NULL) 
+
+# Impulse Response Function (IRF) plots with improved labeling and colors
+RRPirf <- irf(Model3, impulse = "FoodPriceIndex", response = "EggPrice", n.ahead = 40, boot = TRUE)
+plot(RRPirf, ylab = "Percent change in EggPrice", main = "IRF of EggPrice to FoodPriceIndex", col = c("#0072B2", "#D55E00", "#009E73"))
+
+RRPirf2 <- irf(Model3, impulse = "FoodPriceIndex", response = "RicePrice", n.ahead = 40, boot = TRUE)
+plot(RRPirf2, ylab = "Percent change in RicePrice", main = "IRF of RicePrice to FoodPriceIndex", col = c("#0072B2", "#D55E00", "#009E73"))
+
+RRPirf3 <- irf(Model3, impulse = "FoodPriceIndex", response = "milk_price", n.ahead = 30, boot = TRUE)
+plot(RRPirf3, ylab = "Percent change in MilkPrice", main = "IRF of MilkPrice to FoodPriceIndex", col = c("#0072B2", "#D55E00", "#009E73"))
+
+RRPirf4 <- irf(Model3, impulse = "FoodPriceIndex", response = "ChickenPrice", n.ahead = 40, boot = TRUE)
+plot(RRPirf4, ylab = "Percent change in ChickenPrice", main = "IRF of ChickenPrice to FoodPriceIndex", col = c("#0072B2", "#D55E00", "#009E73"))
+
+```
